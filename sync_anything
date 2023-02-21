@@ -1,0 +1,148 @@
+#!/bin/dash
+
+# I like anything-sync-daemon(https://github.com/graysky2/anything-sync-daemon) 
+# which is called asd, it can be install in archlinux since archlinux uses 
+# systemd, and asd only supports systemd. But i use gentoo with oprc, so i 
+# cannot install asd in my linux. Yeah, in a fact, there is no need to rewrite
+# the script, the only thing need to do is change service to openrc's init. But 
+# i'd like to rewrite it, make it simple and more bugs. Any way, who cares!
+# 2023-2-21 00:00
+
+
+
+WANNT_TO_SYNC="
+/home/mandalorian/catch/apvhki5y.default
+/home/mandalorian/catch/test
+"
+
+# receive args and define lock file position
+# notice: the lock file cannot put in /tmp directory
+# because /tmp filesystem is tmpfs, we cannot set 
+# attribute in this dir.
+WANNA_TO_DO=$1
+SYNCED_FILE="$HOME/.cache/sync_anything/sync_anything.lock"
+
+# check args
+[ -z "$WANNA_TO_DO" ] && exit
+
+
+# define color variable for print log info
+Red='\033[0;31m'
+Green='\033[0;32m'
+End='\033[0m'
+
+
+log () {
+	color=$1
+	info=$2
+	status=$3
+	[ "$color" = warn ] && echo "* $info ${Red} ${status} ${End}"
+	[ "$color" = normal ] && echo "* $info ${Green} ${status} ${End}"
+}
+
+# check the path of which will be synced valid or not
+check_source_path () {
+	for source in $WANNT_TO_SYNC
+	do
+		[ -f "$source" -o -d "$source" ] &&
+			log "normal" "path: $source is" "correct." || 
+			log "warn" "path: $source is illegal, please check again!" "Process Abort."
+	done
+}
+
+
+# receive source path and return a list with
+# fixed source path(remove the last slash if exists)
+# an unique destination path(use shasum)
+# destination path with source basename
+get_path_info () {
+	source_path="$1"
+	source_dir="$(dirname $source_path)"
+	source_base="$(basename $source_path)"
+	fixed_source_path="${source_dir}/${source_base}"
+	uniq_code="$(echo $fixed_source_path |shasum |cut -d' ' -f1)"
+	dest_path="/tmp/${source_base}-${uniq_code}"
+	dest_path_sync="${dest_path}/${source_base}"
+	echo "$fixed_source_path $dest_path $dest_path_sync"
+}
+
+# create unique directory in /tmp and write directory info to /tmp/sync_anything.lock file
+create_tmp_dir () {
+	fixed_source_path=$1
+	dest_path=$2
+	[ -f "$fixed_source_path" -o -d "$fixed_source_path" ] && 
+		install -m755 -d $dest_path &&
+		log "normal" "tmp directory: $dest_path created" "successfully!"
+	echo "$fixed_source_path $dest_path" >> $SYNCED_FILE
+}
+
+# copy source file/dir to /tmp directory and then bind /tmp dir to source
+# after mount, lock write and delete permission of /tmp/sync_anything.lock 
+# file. In order to prevent syncing failed by rerun program or manually 
+# editing.
+sync_file () {
+	for source in $WANNT_TO_SYNC
+	do
+		list=$(get_path_info $source)
+
+		fixed_source_path=$(echo $list |cut -d' ' -f1)
+		dest_path=$(echo $list |cut -d' ' -f2)
+		dest_path_sync=$(echo $list |cut -d' ' -f3)
+
+		create_tmp_dir $fixed_source_path $dest_path
+
+		[ -f "$fixed_source_path" ] && rsync -ltp $fixed_source_path $dest_path && 
+			doas mount --bind $dest_path_sync $fixed_source_path &&
+			log "normal" "file: $fixed_source_path mounted to tmpfs" "successfully!"
+		[ -d "$fixed_source_path" ] && rsync -a $fixed_source_path $dest_path && 
+			doas mount --bind $dest_path_sync $fixed_source_path &&
+			log "normal" "directory: $fixed_source_path mounted to tmpfs" "successfully!"
+	done
+	doas chattr +i "$SYNCED_FILE"
+}
+
+# umount file/dir and then sync tmp file/dir back to source
+# after umount, delete the sync folder created in /tmp.
+# then remove /tmp/sync_anything.lock file.
+unsync_file () {
+	while read line
+	do 
+		fixed_source_path=$(echo $line |cut -d' ' -f1)
+		dest_path=$(echo $line |cut -d' ' -f2)
+		base_name=$(basename $fixed_source_path)
+		dest_path_sync="${dest_path}/${base_name}"
+		doas umount $fixed_source_path && 
+			log "normal" "$fixed_source_path umounted from tmpfs" "successfully!" ||
+			log "warn" "umount $fixed_source_path failed," "please check!"
+		[ -f $fixed_source_path ] && 
+			rsync -ltpu --remove-source-files "${dest_path_sync}" $fixed_source_path &&
+			log "normal" "$fixed_source_path sync back" "successfully!" &&
+			rm -r "$dest_path" 
+		[ -d $fixed_source_path ] && 
+			rsync -au --remove-source-files --delete-after "${dest_path_sync}/" $fixed_source_path &&
+			log "normal" "$fixed_source_path sync back" "successfully!" &&
+			rm -r "$dest_path"
+	done < $SYNCED_FILE
+	doas chattr -i "$SYNCED_FILE"
+	rm "$SYNCED_FILE" && log "normal" "locked file $SYNCED_FILE has been" "released!"
+}
+
+
+# main function
+case $WANNA_TO_DO in 
+	"start")
+		# if local cache directory has no sync_anything dir then create it
+		[ -d "$(dirname $SYNCED_FILE)" ] || mkdir -p "$HOME/.cache/sync_anything"
+
+		# check whether the lock file exist, if true then cannot run it again
+		# need to stop it fist and then start it
+		[ -f "$SYNCED_FILE" ] && log "warn" "sync_anything is already running." "please stop it first!" || touch $SYNCED_FILE
+		check_source_path
+		sync_file
+	;;
+	"stop")
+		unsync_file
+	;;
+	"*")
+	;;
+esac
