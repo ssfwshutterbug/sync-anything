@@ -7,3 +7,5 @@ cannot install asd in my linux. Yeah, in a fact, there is no need to rewrite
 the script, the only thing need to do is changing service to openrc's init. But 
 i'd like to rewrite it, make it simple and more bugs. Any way, who cares!
 2023-2-21 00:00
+
+![image](https://github.com/ssfwshutterbug/sync-anything/blob/main/sync_anything_service.png?raw=true)
