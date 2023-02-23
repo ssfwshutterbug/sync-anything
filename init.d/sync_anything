@@ -1,0 +1,16 @@
+#!/sbin/openrc-run
+
+# this is the service setting of sync_anything
+
+command="/home/mandalorian/.local/bin/sync_anything"
+command_args=""
+pidfile="/run/${RC_SVCNAME}.pid"
+#command_user="mandalorian:mandalorian"
+
+start() {
+	/home/mandalorian/.local/bin/sync_anything ${START_OPTS}
+}
+
+stop() {
+	/home/mandalorian/.local/bin/sync_anything ${STOP_OPTS}
+}
